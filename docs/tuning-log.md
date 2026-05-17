@@ -39,3 +39,32 @@ Some delay line lengths caused low-frequency resonance accumulation. Fix: per-sa
 - Two presets (Staccato, Sustained) are sufficient for Phase 1.
 - Mouse bowing feels reasonable but SoftPot velocity response will need separate tuning on hardware.
  
+## Session 2
+
+**Platform:** Python prototype, mouse bowing, keyboard pitch
+
+### Issues Found
+
+**Pizzicato transient on note change while bowing.**
+When bow intensity was above threshold and a new note was triggered, the
+excitation burst fired on top of continuous bow noise, producing a pluck
+instead of a smooth pitch change. Fix: suppress excitation burst when
+`bow_intensity >= 0.05` — continuous bow noise re-excites the new pitch
+naturally.
+
+**Low-end buildup in Sustained preset.**
+DC accumulation in the delay line caused low-frequency content to build up
+over time, audible as a low rumble under sustained notes. The existing
+`*= 0.98` stabilizer inside the loop was insufficient. Fix: one-pole
+high-pass filter on the output stage with `hp_alpha = 0.995` (~220Hz
+cutoff at 44100Hz). Further tuning likely needed on real hardware with
+headphones.
+
+### Known Remaining Issues
+
+- High-pass cutoff frequency may need adjustment on hardware — 220Hz may
+  be too aggressive or not aggressive enough depending on headphone
+  response.
+- Bow velocity scaling tuned for mouse input — will need retuning for
+  SoftPot hardware.
+- Preset decay and brightness values unvalidated on real hardware.

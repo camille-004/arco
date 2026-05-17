@@ -4,7 +4,7 @@ import time
 
 import numpy as np
 import sounddevice as sd
-from pynput import keyboard, mouse
+from pynput import mouse
 
 SAMPLE_RATE = 44100
 BLOCK_SIZE = 256
@@ -30,7 +30,7 @@ curr_freq = NOTE_FREQS["a"]
 bow_intensity = 0.0
 preset_idx = 0
 
-PRESETS = [
+PRESETS: list[dict[str, float | str]] = [
     {
         "name": "Staccato",
         "decay": 0.9960,
@@ -50,25 +50,26 @@ PRESETS = [
 
 class WaveguideVoice:
     """Karplus-Strong digital waveguide.
-    
+
     Ref: https://ccrma.stanford.edu/~jos/pasp/Karplus_Strong_Algorithm.html
-    Circular buffer of samples: each sample travels around the loop, losing energy each cycle through the loop filter. Loop length sets the pitch.
+    Circular buffer of samples: each sample travels around the loop,
+    losing energy each cycle through the loop filter. Loop length setsthe pitch.
     """
 
     def __init__(self, freq: float, sample_rate: int) -> None:
         self.sr = sample_rate
-        self.delay_len = max(2, int(round(sample_rate / freq)))
+        self.delay_len = max(2, round(sample_rate / freq))
         self.delay = np.zeros(self.delay_len, dtype=np.float32)
         self.pos = 0
         self.freq = freq
-    
+
     def retune(self, freq: float) -> None:
         """Change pitch. Resets the delay line."""
         self.freq = freq
-        self.delay_len = max(2, int(round(self.sr / freq)))
+        self.delay_len = max(2, round(self.sr / freq))
         self.delay = np.zeros(self.delay_len, dtype=np.float32)
         self.pos = 0
-    
+
     def excite(self, amount: float) -> None:
         """Inject a noise burst into the delay line."""
         burst_len = min(self.delay_len, max(4, int(self.delay_len * 0.15)))
@@ -95,20 +96,20 @@ class WaveguideVoice:
         for i in range(num_samples):
             cur = self.delay[self.pos]
             nxt = self.delay[(self.pos + 1) % self.delay_len]
-            
+
             # Blend between lowpass and current
             filtered = (1.0 - bright) * 0.5 * (cur + nxt) + bright * cur
             # Simple one-pole high shelf cut
             # Ref: https://ccrma.stanford.edu/~jos/filters/One_Pole.html
             filtered *= 0.98
-            
+
             # Multiply by just-under-1.0 each sample to add decay
             filtered *= decay
 
             # Trickle noise while bowing
             if bow > 0.05:
                 filtered += np.random.uniform(-bow * 0.06, bow * 0.06)
-            
+
             self.delay[self.pos] = filtered
             out[i] = filtered
             self.pos = (self.pos + 1) % self.delay_len
@@ -129,7 +130,7 @@ class SimpleReverb:
         self.comb = np.zeros(comb_len, dtype=np.float32)
         self.cpos = 0  # Current position of circular buffer
         self.fb = 0.82  # How much of the delay signal feeds back
-    
+
     def process(self, signal: np.ndarray) -> np.ndarray:
         """Apply reverb to a block of samples."""
         out = np.zeros_like(signal)
@@ -148,32 +149,30 @@ needs_excite = False
 
 
 def audio_callback(
-    out_data: np.ndarray,
-    frames: int,
-    time_info: object,
-    status: sd.CallbackFlags
+    out_data: np.ndarray, frames: int, time_info: object, status: sd.CallbackFlags
 ) -> None:
     """Called by sounddevice every BLOCK_SIZE samples."""
     global needs_excite
 
-    # Snapshot shared state under lock so keyboard/mouse threads can't change values mid-block
+    # Snapshot shared state under lock so keyboard/mouse threads
+    # can't change values mid-block
     with lock:
         preset = PRESETS[preset_idx]
         bow = bow_intensity
         excite = needs_excite
         needs_excite = False
-    
+
     if excite:
         amount = preset.get("excite_amount", 0.3)
         voice.excite(amount)
-    
+
     block = voice.process(frames, preset, bow)
 
-    rev_mix = preset["reverb"]
+    rev_mix = float(preset["reverb"])
     if rev_mix > 0.0:
         wet = reverb.process(block)
         block = block * (1.0 - rev_mix) + wet * rev_mix
-    
+
     # Brickwall limiter at 0db
     block = np.tanh(block * 2.0) * 0.5
 
@@ -222,7 +221,7 @@ def print_status() -> None:
         preset_name = PRESETS[preset_idx]["name"]
         freq = voice.freq
         bow = bow_intensity
-    
+
     note = next(
         (name for key, name in NOTE_NAMES.items() if NOTE_FREQS[key] == freq), "---"
     )
@@ -249,22 +248,22 @@ def handle_key(ch: str) -> bool:
             needs_excite = True
         print_status()
 
-    elif ch == 'p':
+    elif ch == "p":
         with lock:
             preset_idx = (preset_idx + 1) % len(PRESETS)
             voice.retune(voice.freq)  # reset delay line on preset change
             needs_excite = True
         print_status()
 
-    elif ch == 'q':
+    elif ch == "q":
         return False
 
     return True
 
 
 def main() -> None:
-    import tty
     import termios
+    import tty
 
     decay_thread = threading.Thread(target=mouse_decay_loop, daemon=True)
     decay_thread.start()
@@ -287,6 +286,7 @@ def main() -> None:
 
     try:
         import tty
+
         tty.setcbreak(fd)
         with stream, mouse_listener:
             print_status()

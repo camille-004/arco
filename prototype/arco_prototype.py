@@ -47,6 +47,8 @@ PRESETS: list[dict[str, float | str]] = [
     },
 ]
 
+_hp_state: float = 0.0
+
 
 class WaveguideVoice:
     """Karplus-Strong digital waveguide.
@@ -173,7 +175,17 @@ def audio_callback(
         wet = reverb.process(block)
         block = block * (1.0 - rev_mix) + wet * rev_mix
 
-    # Brickwall limiter at 0db
+    # One-pole high-pass filter, removes low-end buildup
+    # Ref: https://ccrma.stanford.edu/~jos/filters/One_Pole.html
+    global _hp_state
+    hp_alpha = 0.995  # cutoff ~220Hz at 44100Hz, adjust if too aggressive
+    filtered = np.zeros_like(block)
+    for i in range(len(block)):
+        _hp_state = hp_alpha * _hp_state + (1.0 - hp_alpha) * block[i]
+        filtered[i] = block[i] - _hp_state
+    block = filtered
+
+    # Soft limiter
     block = np.tanh(block * 2.0) * 0.5
 
     # Both stereo channels
@@ -245,7 +257,9 @@ def handle_key(ch: str) -> bool:
             freq = NOTE_FREQS[ch]
             if freq != voice.freq:
                 voice.retune(freq)
-            needs_excite = True
+            # Only excite if not actively bowing. Prevents pizz transient
+            # during bow. When bowing, continuous noise re-excites naturally.
+            needs_excite = bow_intensity < 0.05
         print_status()
 
     elif ch == "p":
